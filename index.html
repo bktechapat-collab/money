@@ -437,8 +437,8 @@ details.bud summary{min-height:56px;display:flex;align-items:center;font-weight:
       </label>
 
       <details class="bud" id="budDet">
-        <summary>งบรายหมวดต่อเดือน</summary>
-        <p class="ahint" style="margin:0 0 8px">ตั้งเพดานหมวดที่ใช้เกินบ่อย แอปจะเตือนในหน้าสมุดเมื่อใช้ไปถึง 80% ของงบ เว้นว่างคือไม่จำกัด</p>
+        <summary id="budSum">งบรายหมวดต่อเดือน (ค่าตั้งต้น)</summary>
+        <p class="ahint" id="budHint" style="margin:0 0 8px">ตั้งเพดานหมวดที่ใช้เกินบ่อย แอปจะเตือนในหน้าสมุดเมื่อใช้ไปถึง 80% ของงบ เว้นว่างคือไม่จำกัด</p>
         <div id="budBody"></div>
       </details>
     </div>
@@ -466,8 +466,8 @@ details.bud summary{min-height:56px;display:flex;align-items:center;font-weight:
       <div class="btnrow"><button type="button" class="btn ghost" data-action="addrec">+ เพิ่มรายการประจำ</button></div>
     </section>
     <section class="block">
-      <div class="block-head"><h2>หมวดหมู่ของฉัน</h2></div>
-      <p class="lead" style="margin:2px 0 8px">เพิ่มหมวดของตัวเองได้ เช่น สัตว์เลี้ยง ทำบุญ</p>
+      <div class="block-head"><h2>หมวดหมู่</h2></div>
+      <p class="lead" style="margin:2px 0 8px">แก้ชื่อหรือไอคอน ซ่อนหมวดที่ไม่ใช้ และเพิ่มหมวดของตัวเองได้ เช่น สัตว์เลี้ยง ทำบุญ รายการเก่าที่จดไว้ไม่หาย</p>
       <div id="catList"></div>
       <div class="btnrow"><button type="button" class="btn ghost" data-action="addcat">+ เพิ่มหมวดหมู่</button></div>
     </section>
@@ -544,6 +544,7 @@ details.bud summary{min-height:56px;display:flex;align-items:center;font-weight:
       <label class="field" id="dayField" hidden><span>วันที่ของเดือน (1-31)</span><input type="number" id="dayIn" min="1" max="31" inputmode="numeric"></label>
       <label class="field"><span>โน้ต (ไม่ใส่ก็ได้)</span><input id="note" maxlength="80" autocomplete="off" placeholder="เช่น ข้าวมันไก่ กับ ชาเย็น"></label>
     </div>
+    <button type="button" class="linkbtn" id="dupBtn" data-action="dup" hidden>คัดลอกเป็นรายการใหม่</button>
     <label class="check" id="repRow"><input type="checkbox" id="rep"><span>จดซ้ำให้ทุกเดือน<small>เช่น ค่าเช่า ค่าเน็ต ค่าผ่อน หรือซื้อกองทุนทุกเดือน ระบบจะจดให้เองตามวันที่ที่เลือก</small></span></label>
     <label class="check" id="pauseRow" hidden><input type="checkbox" id="recPause"><span>หยุดจดชั่วคราว</span></label>
     <div class="actions">
@@ -611,15 +612,38 @@ const BASE_CATS = {
 let CATS = {};
 const CAT_MAP = {};
 const CUSTOM_COLORS = ['#C2543D', '#6C7A2E', '#2F7F86', '#8A4F9E', '#B5731F', '#3C6FB0'];
+const BASE_IDS = {};
+Object.values(BASE_CATS).flat().forEach(c => { BASE_IDS[c.id] = true; });
+// รายการหมวดทั้งหมดของประเภท t (รวมที่ซ่อนอยู่): หมวดที่มากับแอป (แก้ชื่อ/ไอคอน/ซ่อนได้) + หมวดที่ผู้ใช้เพิ่ม
+function catList(t) {
+  const S = state.settings, ov = {};
+  S.cats.forEach(c => { ov[c.id] = c; });
+  const out = BASE_CATS[t].map(b => { const o = ov[b.id]; return {id: b.id, t, n: o && o.n ? o.n : b.n, e: o && o.e ? o.e : b.e, c: b.c, hide: !!(o && o.hide), base: true}; });
+  S.cats.forEach((c, i) => {
+    if (c.t !== t || BASE_IDS[c.id]) return;
+    out.splice(out.length - 1, 0, {id: c.id, t, n: c.n, e: c.e, c: CUSTOM_COLORS[i % CUSTOM_COLORS.length], hide: !!c.hide, custom: true});
+  });
+  return out;
+}
+function findCatItem(id) {
+  for (const t of Object.keys(BASE_CATS)) { const it = catList(t).find(c => c.id === id); if (it) return it; }
+  return null;
+}
+const catUsed = id => allTx().some(x => x.c === id) || state.settings.rec.some(r => r.c === id);
+function ensureCatEntry(it) {
+  const S = state.settings;
+  let o = S.cats.find(c => c.id === it.id);
+  if (!o) { o = {id: it.id, t: it.t, n: it.n, e: it.e, hide: false}; S.cats.push(o); }
+  return o;
+}
 function rebuildCats() {
   CATS = {};
-  Object.keys(BASE_CATS).forEach(t => { CATS[t] = BASE_CATS[t].slice(); });
   Object.keys(CAT_MAP).forEach(k => delete CAT_MAP[k]);
-  Object.values(BASE_CATS).flat().forEach(c => { CAT_MAP[c.id] = c; });
-  state.settings.cats.forEach((c, i) => {
-    const o = {id: c.id, n: c.n, e: c.e, c: CUSTOM_COLORS[i % CUSTOM_COLORS.length]};
-    CAT_MAP[c.id] = o;
-    if (!c.hide) { const arr = CATS[c.t]; arr.splice(arr.length - 1, 0, o); }
+  Object.keys(BASE_CATS).forEach(t => {
+    const l = catList(t);
+    l.forEach(c => { CAT_MAP[c.id] = c; });
+    CATS[t] = l.filter(c => !c.hide);
+    if (!CATS[t].length) CATS[t] = [l[l.length - 1]];
   });
 }
 const catById = id => CAT_MAP[id] || {id, n:'อื่นๆ', e:'📦', c:'#8A8F98'};
@@ -677,6 +701,11 @@ function normSettings(o) {
       if (!isYM(m) || !src || typeof src !== 'object') continue;
       const c = {};
       OVR_FIELDS.forEach(f => { const v = src[f]; if (typeof v === 'number' && isFinite(v) && v >= 0) c[f] = v; });
+      if (src.bud && typeof src.bud === 'object') {
+        const b = {};
+        for (const id in src.bud) { const v = src.bud[id]; if (typeof v === 'number' && isFinite(v) && v >= 0) b[cStr(id, 40)] = v; }
+        if (Object.keys(b).length) c.bud = b;
+      }
       if (Object.keys(c).length) d.months[m] = c;
     }
   }
@@ -704,6 +733,7 @@ const state = {
   storage: null,          // 'cloud' | 'local' | 'error'
   ready: false,
   page: 'book',
+  catOpen: {},            // หมวดประเภทไหนในหน้าเพิ่มเติมที่เปิดค้างไว้
   sumMode: 'month',       // หน้าสรุป: 'month' | 'year'
   year: String(new Date().getFullYear()),
   aMode: 'all',           // หน้า Assumption: 'all' = ค่าตั้งต้นทุกเดือน, 'month' = เฉพาะเดือนที่เลือก
@@ -852,14 +882,15 @@ function renderHero() {
 function renderBreakdown() {
   const box = $('#breakdown'), cmp = $('#cmp');
   const exp = (state.months[state.view] || []).filter(x => x.t === 'e');
-  const total = exp.reduce((s, x) => s + x.a, 0);
-  if (!total) {
+  const total = exp.reduce((s, x) => s + x.a, 0), B = budgetsFor(state.view);
+  if (!total && !Object.keys(B).length) {
     cmp.textContent = '';
     box.innerHTML = `<p class="soft">${state.ready ? 'ยังไม่มีรายจ่ายในเดือนนี้' : 'กำลังโหลดข้อมูล…'}</p>`;
     return;
   }
   const by = {};
   exp.forEach(x => { by[x.c] = (by[x.c] || 0) + x.a; });
+  Object.keys(B).forEach(id => { if (!(id in by)) by[id] = 0; });
   const rows = Object.entries(by).sort((a, b) => b[1] - a[1]);
 
   const prev = (state.months[shiftMonth(state.view, -1)] || []).filter(x => x.t === 'e').reduce((s, x) => s + x.a, 0);
@@ -868,14 +899,14 @@ function renderBreakdown() {
     cmp.textContent = p === 0 ? 'เท่ากับเดือนก่อน' : `${p > 0 ? 'มากกว่า' : 'น้อยกว่า'}เดือนก่อน ${Math.abs(p)}%`;
   } else cmp.textContent = '';
 
-  const seg = rows.map(([id, v]) => `<span class="${state.cat && state.cat !== id ? 'dim' : ''}" style="flex:${v};background:${catById(id).c}" title="${esc(catById(id).n)}"></span>`).join('');
+  const seg = rows.filter(([, v]) => v > 0).map(([id, v]) => `<span class="${state.cat && state.cat !== id ? 'dim' : ''}" style="flex:${v};background:${catById(id).c}" title="${esc(catById(id).n)}"></span>`).join('');
   const items = rows.map(([id, v]) => {
-    const c = catById(id), pct = Math.round(v / total * 100), bud = state.settings.budgets[id] || 0, bp = bud > 0 ? v / bud : 0;
+    const c = catById(id), pct = total ? Math.round(v / total * 100) : 0, bud = B[id] || 0, bp = bud > 0 ? v / bud : 0;
     return `<li><button type="button" class="catrow" data-action="pickcat" data-c="${esc(id)}" aria-pressed="${state.cat === id}">
       <span class="ico" style="--c:${c.c}" aria-hidden="true">${c.e}</span>
       <span class="name">${esc(c.n)}${bud > 0 ? `<small>งบ ${money(bud)}</small>` : ''}</span>
       <span class="sum">${money(v)}</span>
-      <span class="pct">${pct < 1 ? '<1' : pct}%</span>${bud > 0 ? `<i class="bmeter" style="--w:${Math.min(100, bp * 100)}%;--mc:${bp >= 1 ? 'var(--expense)' : bp >= 0.8 ? 'var(--accent)' : 'var(--income)'}"></i>` : ''}</button></li>`;
+      <span class="pct">${v === 0 ? 0 : pct < 1 ? '<1' : pct}%</span>${bud > 0 ? `<i class="bmeter" style="--w:${Math.min(100, bp * 100)}%;--mc:${bp >= 1 ? 'var(--expense)' : bp >= 0.8 ? 'var(--accent)' : 'var(--income)'}"></i>` : ''}</button></li>`;
   }).join('');
   box.innerHTML = `<div class="stack" aria-hidden="true">${seg}</div><ul class="cats ${state.cat ? 'has-sel' : ''}">${items}</ul>`;
 }
@@ -1026,6 +1057,23 @@ function renderSummary() {
     }).join('') + `</section>`;
   }
 
+  // ---- งบรายหมวดของเดือนนี้ ----
+  const BB = budgetsFor(k), bIds = Object.keys(BB);
+  if (bIds.length) {
+    const spent = {};
+    (state.months[k] || []).forEach(x => { if (x.t === 'e') spent[x.c] = (spent[x.c] || 0) + x.a; });
+    const totB = bIds.reduce((a, id) => a + BB[id], 0), totS = bIds.reduce((a, id) => a + (spent[id] || 0), 0);
+    html += `<section class="block" aria-labelledby="budT"><div class="block-head"><h2 id="budT">งบรายหมวดเดือนนี้</h2><span class="cmp">ใช้ไป ${money(totS)} จากงบ ${money(totB)}</span></div>`
+      + bIds.sort((a, b) => BB[b] - BB[a]).map(id => {
+        const c = catById(id), v = spent[id] || 0, p = v / BB[id];
+        const st = p >= 1 ? ['over', `เกินงบ ${money(v - BB[id])}`] : p >= 0.8 ? ['lack', `ใกล้เต็ม เหลือ ${money(BB[id] - v)}`] : ['ok', `เหลือ ${money(BB[id] - v)}`];
+        const col = p >= 1 ? 'var(--expense)' : p >= 0.8 ? 'var(--accent)' : 'var(--income)';
+        return `<div class="plan"><div class="plan-top"><span class="plan-name">${c.e} ${esc(c.n)}</span><span class="st ${st[0]}">${st[1]}</span></div>
+          <div class="meter"><i style="--w:${Math.min(100, p * 100)}%;--mc:${col}"></i></div>
+          <div class="plan-num"><span>ใช้ไป <b>${money(v)}</b></span><span>งบ ${money(BB[id])}</span></div></div>`;
+      }).join('') + `</section>`;
+  }
+
   // ---- ย้อนหลัง 6 เดือน ----
   const ms = []; for (let i = 5; i >= 0; i--) ms.push(shiftMonth(k, -i));
   const info = ms.map(m => {
@@ -1083,14 +1131,22 @@ function fillAssumption() {
   $('#pvdToggle').hidden = month;
   $('#countRow').hidden = month;
   $('#taxRow').hidden = month;
-  $('#budDet').hidden = month;
   setF('a_taxcap', fmtNum(S.taxCap), '0');
   const bb = $('#budBody'), sig = CATS.e.map(c => c.id).join(',');
   if (bb.dataset.sig !== sig) {
     bb.dataset.sig = sig;
     bb.innerHTML = CATS.e.map(c => `<label class="budrow"><span class="ico" style="--c:${c.c};width:36px;height:36px;font-size:18px" aria-hidden="true">${c.e}</span><span class="bn">${esc(c.n)}</span><span class="ainput"><b>฿</b><input data-num data-bud="${c.id}" inputmode="decimal" autocomplete="off" placeholder="ไม่จำกัด" aria-label="งบ${esc(c.n)}ต่อเดือน (บาท)"></span></label>`).join('');
   }
-  $$('#budBody input').forEach(el => { if (document.activeElement !== el) el.value = fmtNum(S.budgets[el.dataset.bud] || 0); });
+  const ob = o.bud || {};
+  $$('#budBody input').forEach(el => {
+    const id = el.dataset.bud;
+    el.placeholder = month && S.budgets[id] > 0 ? String(S.budgets[id] / 100) : 'ไม่จำกัด';
+    if (document.activeElement !== el) el.value = month ? (id in ob ? String(ob[id] / 100) : '') : fmtNum(S.budgets[id] || 0);
+  });
+  $('#budSum').textContent = month ? 'งบรายหมวดของเดือนนี้' : 'งบรายหมวดต่อเดือน (ค่าตั้งต้น)';
+  $('#budHint').textContent = month
+    ? 'ตั้งงบของเดือนนี้ เช่น ค่ากินเดือนนี้ตั้งไว้เท่าไร ช่องที่เว้นว่างใช้งบตั้งต้น (ตัวเลขสีเทา) ใส่ 0 ถ้าเดือนนี้ไม่ต้องการตั้งงบหมวดนั้น'
+    : 'ตั้งเพดานหมวดที่ใช้เกินบ่อย แอปจะเตือนในหน้าสมุดเมื่อใช้ไปถึง 80% ของงบ เว้นว่างคือไม่จำกัด งบนี้ใช้กับทุกเดือน ถ้าเดือนไหนต่างออกไป ให้สลับเป็น "เฉพาะเดือน" แล้วตั้งงบเดือนนั้น';
   renderOvr();
   renderPreview();
 }
@@ -1174,8 +1230,14 @@ function onAssump(e) {
     if (v !== t.value) t.value = v;
   }
   if (t.dataset && t.dataset.bud !== undefined) {
-    const v = parseFloat(t.value), B = state.settings.budgets;
-    if (v > 0) B[t.dataset.bud] = Math.round(Math.min(v, 1e9) * 100); else delete B[t.dataset.bud];
+    const S = state.settings, id = t.dataset.bud, raw = t.value.trim(), v = parseFloat(raw);
+    if (state.aMode === 'month') {
+      const k = state.view, o = S.months[k] || (S.months[k] = {}), b = o.bud || (o.bud = {});
+      if (raw === '' || !(v >= 0)) delete b[id]; else b[id] = Math.round(Math.min(v, 1e9) * 100);
+      if (!Object.keys(b).length) delete o.bud;
+      if (!Object.keys(o).length) delete S.months[k];
+    } else if (v > 0) S.budgets[id] = Math.round(Math.min(v, 1e9) * 100);
+    else delete S.budgets[id];
   }
   readAssumption(); renderOvr(); renderPreview(); renderHero(); renderAlerts(); renderBreakdown(); renderSummary(); scheduleSave();
 }
@@ -1237,6 +1299,7 @@ function openSheet(tx, rec) {
   $('#recPause').checked = rec ? !rec.active : false;
   $('#err').textContent = '';
   const del = $('#delBtn'); del.hidden = !(tx || rec); del.textContent = rec ? 'ลบรายการประจำ' : 'ลบรายการ';
+  $('#dupBtn').hidden = !tx;
   renderFormType(); renderFormChips(); renderQuick(); renderFormMode();
   dlg.showModal();
   setTimeout(() => { const a = $('#amt'); a.focus(); a.select(); }, 30);
@@ -1552,11 +1615,13 @@ function renderMore() {
       <span class="txt"><b>${esc(r.n || c.n)}</b><small>${TYPE_NAME[r.t]} ทุกวันที่ ${r.day}${r.active ? '' : ' (หยุดชั่วคราว)'}</small></span>
       <span class="amt ${r.t}">${money(r.a)}</span></button>`;
   }).join('') + `</div>` : `<p class="soft">ยังไม่มีรายการประจำ</p>`;
-  $('#catList').innerHTML = S.cats.length ? `<div class="rows">` + S.cats.map(c => {
-    const o = CAT_MAP[c.id] || {c: '#8A8F98'};
-    return `<button type="button" class="row" data-action="editcat" data-id="${esc(c.id)}"><span class="ico" style="--c:${o.c}" aria-hidden="true">${esc(c.e)}</span>
-      <span class="txt"><b>${esc(c.n)}</b><small>${TYPE_NAME[c.t]}${c.hide ? ' (ซ่อนอยู่)' : ''}</small></span></button>`;
-  }).join('') + `</div>` : `<p class="soft">ยังไม่มีหมวดหมู่ที่เพิ่มเอง</p>`;
+  $('#catList').innerHTML = Object.keys(BASE_CATS).map(t => {
+    const l = catList(t);
+    return `<details class="bud" data-t="${t}" ${state.catOpen[t] ? 'open' : ''}><summary>${TYPE_NAME[t]} (${l.filter(c => !c.hide).length} หมวด)</summary><div class="rows">`
+      + l.map(c => `<button type="button" class="row" data-action="editcat" data-id="${esc(c.id)}"><span class="ico" style="--c:${c.c}" aria-hidden="true">${esc(c.e)}</span>
+        <span class="txt"><b>${esc(c.n)}</b><small>${c.custom ? 'หมวดที่เพิ่มเอง' : 'มากับแอป'}${c.hide ? ', ซ่อนอยู่' : ''}</small></span></button>`).join('')
+      + `</div></details>`;
+  }).join('');
   $('#storeInfo').textContent = state.storage === 'cloud'
     ? 'ข้อมูลเก็บในพื้นที่เก็บข้อมูลของ Claude ผูกกับบัญชีของคุณ เห็นได้เฉพาะคุณ ถ้ายกเลิกการเผยแพร่แอปนี้ ข้อมูลจะถูกลบถาวร จึงควรกดสำรองข้อมูลไว้เป็นระยะ'
     : state.storage === 'local'
@@ -1565,14 +1630,23 @@ function renderMore() {
   renderImport();
 }
 
+// งบรายหมวดของเดือน k: เดือนไหนตั้งไว้เฉพาะก็ใช้ค่านั้น (ใส่ 0 = ไม่ตั้งงบหมวดนั้นในเดือนนั้น) ไม่ตั้งก็ใช้งบตั้งต้น
+function budgetsFor(k) {
+  const S = state.settings, o = (k && S.months[k] && S.months[k].bud) || {}, out = {};
+  Object.keys(S.budgets).forEach(id => { out[id] = S.budgets[id]; });
+  Object.keys(o).forEach(id => { out[id] = o[id]; });
+  Object.keys(out).forEach(id => { if (!(out[id] > 0)) delete out[id]; });
+  return out;
+}
+
 /* ---------- การแจ้งเตือนในหน้าสมุด ---------- */
 function renderAlerts() {
   const box = $('#alerts'), out = [];
   if (state.ready && state.view === curMonth()) {
-    const S = state.settings, by = {};
+    const S = state.settings, by = {}, B = budgetsFor(state.view);
     (state.months[state.view] || []).forEach(x => { if (x.t === 'e') by[x.c] = (by[x.c] || 0) + x.a; });
-    Object.keys(S.budgets).forEach(id => {
-      const b = S.budgets[id], v = by[id] || 0, c = catById(id);
+    Object.keys(B).forEach(id => {
+      const b = B[id], v = by[id] || 0, c = catById(id);
       if (!(b > 0)) return;
       const p = v / b;
       if (p >= 1) out.push({tone: 'bad', t: `${c.e} ${c.n} เกินงบแล้ว ใช้ไป ${money(v)} จากงบ ${money(b)}`});
@@ -1670,9 +1744,11 @@ function openEntity(kind, item, preset) {
     html = `<p class="ahint" style="margin-bottom:6px">เงินที่มีอยู่แล้วก่อนเริ่มจดในแอปนี้ จะถูกรวมในทรัพย์สินสุทธิ</p>` + money2('f_osave', 'เงินออมที่มีอยู่แล้ว', S.open.save) + money2('f_oinv', 'เงินลงทุนที่มีอยู่แล้ว (เงินต้นที่ใส่ไป)', S.open.invest);
   } else if (kind === 'cat') {
     const c = item || {n: '', e: '🏷️', t: 'e'};
-    E2.e = c.e; E2.t = c.t;
-    title = item ? 'แก้ไขหมวดหมู่' : 'เพิ่มหมวดหมู่'; delLabel = item && item.hide ? 'แสดงหมวดนี้อีกครั้ง' : 'ซ่อนหมวดนี้';
-    html = text2('f_n', 'ชื่อหมวดหมู่', c.n, 'เช่น สัตว์เลี้ยง ทำบุญ') + emojiRow(c.e)
+    E2.e = c.e; E2.t = c.t; E2.canDelete = !!(item && item.custom && !catUsed(item.id));
+    title = item ? 'แก้ไขหมวดหมู่' : 'เพิ่มหมวดหมู่';
+    delLabel = item ? (E2.canDelete ? 'ลบหมวดนี้' : item.hide ? 'แสดงหมวดนี้อีกครั้ง' : 'ซ่อนหมวดนี้') : '';
+    html = (item ? `<p class="ahint" style="margin-bottom:2px">${TYPE_NAME[c.t]}${item.base ? ' (หมวดที่มากับแอป ลบไม่ได้ แต่ซ่อนได้)' : ''}${item.custom && !E2.canDelete ? ' (มีรายการที่ใช้หมวดนี้อยู่ จึงซ่อนได้อย่างเดียว)' : ''}</p>` : '')
+      + text2('f_n', 'ชื่อหมวดหมู่', c.n, 'เช่น สัตว์เลี้ยง ทำบุญ') + emojiRow(c.e)
       + (item ? '' : `<span class="field-label" style="margin-top:14px">ประเภท</span><div id="ctypeRow">${chipsRow('pickctype', [['e', 'รายจ่าย'], ['i', 'รายรับ'], ['s', 'ออมเงิน'], ['v', 'ลงทุน']], c.t)}</div>`);
   }
   $('#f2Title').textContent = title;
@@ -1713,7 +1789,7 @@ $('#form2').addEventListener('submit', e => {
     S.open = {save: amt('f_osave'), invest: amt('f_oinv')};
   } else if (k === 'cat') {
     if (!nm()) return err('ตั้งชื่อหมวดหมู่ก่อน');
-    if (E2.item) { E2.item.n = nm(); E2.item.e = E2.e; }
+    if (E2.item) { const o = ensureCatEntry(E2.item); o.n = nm(); o.e = E2.e; }
     else S.cats.push({id: mkId('k'), t: E2.t, n: nm(), e: E2.e, hide: false});
   }
   scheduleSave(); dlg2.close(); renderAll(); toast('บันทึกแล้ว');
@@ -1721,7 +1797,17 @@ $('#form2').addEventListener('submit', e => {
 $('#del2').addEventListener('click', () => {
   if (!E2 || !E2.item) return;
   const S = state.settings, btn = $('#del2');
-  if (E2.kind === 'cat') { E2.item.hide = !E2.item.hide; scheduleSave(); dlg2.close(); renderAll(); toast(E2.item.hide ? 'ซ่อนหมวดนี้แล้ว รายการเดิมยังอยู่' : 'แสดงหมวดนี้แล้ว'); return; }
+  if (E2.kind === 'cat') {
+    const it = E2.item;
+    if (E2.canDelete) { S.cats = S.cats.filter(c => c.id !== it.id); delete S.budgets[it.id]; toast('ลบหมวดนี้แล้ว'); }
+    else {
+      const o = ensureCatEntry(it);
+      if (!o.hide && catList(it.t).filter(c => !c.hide).length <= 1) { toast('แต่ละประเภทต้องเหลืออย่างน้อย 1 หมวด', true); return; }
+      o.hide = !o.hide;
+      toast(o.hide ? 'ซ่อนหมวดนี้แล้ว รายการเดิมยังอยู่' : 'แสดงหมวดนี้แล้ว');
+    }
+    scheduleSave(); dlg2.close(); renderAll(); return;
+  }
   if (!E2.confirmDel) {
     E2.confirmDel = true; btn.textContent = 'แตะอีกครั้งเพื่อยืนยันลบ';
     clearTimeout(del2Timer); del2Timer = setTimeout(() => { if (E2) { E2.confirmDel = false; btn.textContent = btn.dataset.label; } }, 3500);
@@ -1790,11 +1876,20 @@ document.addEventListener('click', e => {
     case 'editdebt': { const d = debtOf(ds.id); if (d) openEntity('debt', d); break; }
     case 'addopen': openEntity('open'); break;
     case 'addcat': openEntity('cat'); break;
-    case 'editcat': { const c = state.settings.cats.find(x => x.id === ds.id); if (c) openEntity('cat', c); break; }
+    case 'editcat': { const c = findCatItem(ds.id); if (c) openEntity('cat', c); break; }
     case 'close2': dlg2.close(); break;
     case 'pickemoji': E2.e = ds.e; $$('#emojiPick .chip').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.e === ds.e))); break;
     case 'pickbucket': E2.bucket = ds.v; $$('#bucketRow .chip').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.v === ds.v))); break;
     case 'pickctype': E2.t = ds.v; $$('#ctypeRow .chip').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.v === ds.v))); break;
+    case 'dup': {
+      const o = F && F.old; if (!o) break;
+      dlg.close(); openSheet(null);
+      F.t = o.t; F.c = o.c; F.link = o.g || o.b || '';
+      $('#amt').value = String(o.a / 100); $('#note').value = o.n || '';
+      renderFormType(); renderFormChips();
+      toast('คัดลอกมาให้แล้ว เลือกวันที่แล้วกดบันทึก');
+      break;
+    }
     case 'linkpick': F.link = ds.id; renderLink(); break;
     case 'quick': {
       const q = F.quick && F.quick[+ds.i];
@@ -1805,10 +1900,11 @@ document.addEventListener('click', e => {
       const lbl = 'ใช้ค่าของเดือนนี้กับ 12 เดือนถัดไป';
       if (!el.dataset.armed) { el.dataset.armed = '1'; el.textContent = 'แตะอีกครั้งเพื่อยืนยัน จะเขียนทับค่าของ 12 เดือนถัดไป'; setTimeout(() => { delete el.dataset.armed; el.textContent = lbl; }, 4000); break; }
       delete el.dataset.armed; el.textContent = lbl;
-      const P = eff(state.view), S = state.settings;
+      const P = eff(state.view), S = state.settings, fb = budgetsFor(state.view);
       for (let i = 1; i <= 12; i++) {
         const o = {income: P.income, sso: P.sso, save: P.save, invest: P.invest};
         if (S.pvdMode === 'pct') o.pvdPct = P.pvdPct; else o.pvd = P.pvdFix;
+        if (Object.keys(fb).length) o.bud = Object.assign({}, fb);
         S.months[shiftMonth(state.view, i)] = o;
       }
       fillAssumption(); renderHero(); renderSummary(); scheduleSave(); toast('ตั้งค่า 12 เดือนถัดไปแล้ว');
@@ -1817,12 +1913,14 @@ document.addEventListener('click', e => {
     case 'pvdmode':
       if (state.settings.pvdMode !== ds.mode) { readAssumption(); state.settings.pvdMode = ds.mode; fillAssumption(); renderHero(); renderSummary(); scheduleSave(); }
       break;
-    case 'amode': state.aMode = ds.mode; fillAssumption(); break;
+    case 'amode': state.aMode = ds.mode; if (ds.mode === 'month') $('#budDet').open = true; fillAssumption(); break;
     case 'gomonth': state.aMode = 'month'; state.view = ds.m; renderAll(); window.scrollTo(0, 0); break;
     case 'copyprev': {
       const P = eff(shiftMonth(state.view, -1)), S = state.settings;
       const o = {income: P.income, sso: P.sso, save: P.save, invest: P.invest};
       if (S.pvdMode === 'pct') o.pvdPct = P.pvdPct; else o.pvd = P.pvdFix;
+      const pb = budgetsFor(shiftMonth(state.view, -1));
+      if (Object.keys(pb).length) o.bud = pb;
       S.months[state.view] = o;
       fillAssumption(); renderHero(); renderSummary(); scheduleSave(); toast('คัดลอกจากเดือนก่อนแล้ว');
       break;
@@ -1833,6 +1931,7 @@ document.addEventListener('click', e => {
       break;
   }
 });
+document.addEventListener('toggle', e => { const t = e.target; if (t && t.dataset && t.dataset.t) state.catOpen[t.dataset.t] = t.open; }, true);
 $('#q').addEventListener('input', e => { state.q = e.target.value.trim().toLowerCase(); renderList(); });
 
 /* ================= เริ่มทำงาน ================= */
