@@ -262,6 +262,7 @@ form.sheet{padding:18px 18px calc(18px + env(safe-area-inset-bottom,0px))}
 .alert{padding:12px 14px;border-radius:16px;font-size:14.5px;margin-top:8px}
 .alert.warn{background:var(--warn-bg);color:var(--warn-ink)}
 .alert.bad{background:var(--bad-bg);color:var(--bad-ink)}
+.alert.info{background:var(--chip);color:var(--ink)}
 .btnrow{display:grid;gap:10px;margin-top:12px}
 .btn{min-height:48px;padding:0 18px;border:0;border-radius:14px;background:var(--ink);color:var(--bg);font-weight:600;display:inline-flex;align-items:center;justify-content:center;text-align:center;cursor:pointer}
 .btn.ghost{background:var(--chip);color:var(--ink)}
@@ -843,7 +844,7 @@ function renderAll() {
 const assumpMax = () => shiftMonth(curMonth(), 12);   // หน้า Assumption วางแผนล่วงหน้าได้ 12 เดือน
 function setPage(p) {
   state.page = p;
-  if (p !== 'assump' && state.view > maxKey()) state.view = maxKey();
+  if (p !== 'assump' && p !== 'book' && state.view > maxKey()) state.view = maxKey();
   $$('.page').forEach(el => { el.hidden = el.dataset.view !== p; });
   $$('.tab').forEach(b => { if (b.dataset.to === p) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current'); });
   $('#fabwrap').hidden = p === 'assump' || p === 'more';
@@ -865,7 +866,7 @@ function renderHero() {
   const k = state.view, L = ledger(k), t = L.t;
   const label = fMonth.format(parseYmd(k + '-01'));
   $$('.month-label').forEach(el => { el.textContent = label; });
-  $$('.next-btn').forEach(el => { const pg = el.closest('.page'); el.disabled = k >= (pg && pg.dataset.view === 'assump' ? assumpMax() : maxKey()); });
+  $$('.next-btn').forEach(el => { const pg = el.closest('.page'); el.disabled = k >= (pg && (pg.dataset.view === 'assump' || pg.dataset.view === 'book') ? assumpMax() : maxKey()); });
   const b = $('#balance');
   b.textContent = (L.left < 0 ? '−' : '') + money(Math.abs(L.left));
   b.classList.toggle('neg', L.left < 0);
@@ -991,6 +992,11 @@ function renderSummary() {
   if (!state.ready) { box.innerHTML = empty('กำลังโหลดข้อมูล…', ''); return; }
   if (yr) { renderYear(box); return; }
   const k = state.view, P = planFor(k), E = P.E, L = P.L, isCur = k === curMonth();
+  if (k > curMonth()) {
+    box.innerHTML = `<section class="verdict idle"><span class="v-ico"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="4"/></svg></span>
+      <div class="v-body"><div class="v-title">เดือนล่วงหน้า</div><p class="v-sub">ยังไม่ถึงเดือนนี้ จึงยังไม่เทียบกับเป้าหมาย รายการที่จดไว้ล่วงหน้าจะนับเมื่อถึงวันที่ของรายการ ดูและแก้ไขได้ที่หน้าสมุด</p></div></section>`;
+    return;
+  }
 
   const goals = [];
   if (E.save > 0) goals.push({n: 'ออม', plan: E.save, act: P.saveAct});
@@ -1292,7 +1298,7 @@ function openSheet(tx, rec) {
   const src = tx || rec;
   $('#sheetTitle').textContent = rec ? 'แก้ไขรายการประจำ' : tx ? 'แก้ไขรายการ' : 'เพิ่มรายการ';
   $('#amt').value = src ? String(src.a / 100) : '';
-  $('#date').value = tx ? tx.d : todayStr();
+  $('#date').value = tx ? tx.d : (state.page === 'book' && state.view > curMonth() ? state.view + '-01' : todayStr());
   $('#dayIn').value = rec ? String(rec.day) : '';
   $('#note').value = src ? (src.n || '') : '';
   $('#rep').checked = false;
@@ -1408,12 +1414,12 @@ const allTx = () => Object.values(state.months).flat();
 const cleanNum = v => { let s = v.replace(/[^\d.]/g, ''); const i = s.indexOf('.'); if (i >= 0) s = s.slice(0, i + 1) + s.slice(i + 1).replace(/\./g, '').slice(0, 2); return s; };
 
 function tagSums() {
-  const g = {}, b = {};
-  allTx().forEach(x => { if (x.g) g[x.g] = (g[x.g] || 0) + x.a; if (x.b) b[x.b] = (b[x.b] || 0) + x.a; });
+  const g = {}, b = {}, td = todayStr();
+  allTx().forEach(x => { if (x.d > td) return; if (x.g) g[x.g] = (g[x.g] || 0) + x.a; if (x.b) b[x.b] = (b[x.b] || 0) + x.a; });
   return {g, b};
 }
 const debtLeft = (d, sums) => Math.max(0, d.bal - ((sums || tagSums()).b[d.id] || 0));
-const paidThisMonth = d => (state.months[curMonth()] || []).some(x => x.b === d.id);
+const paidThisMonth = d => (state.months[curMonth()] || []).some(x => x.b === d.id && x.d <= todayStr());
 function avgExpense3() {
   let tot = 0, n = 0;
   for (let i = 0; i < 3; i++) { const e = sum(state.months[shiftMonth(curMonth(), -i)] || []).e; if (e > 0) { tot += e; n++; } }
@@ -1422,8 +1428,9 @@ function avgExpense3() {
 function wealth() {
   const S = state.settings, sums = tagSums();
   let sv = S.open.save, iv = S.open.invest, pv = 0;
+  const td = todayStr();
   for (const k in state.months) {
-    state.months[k].forEach(x => { if (x.t === 's') sv += x.a; else if (x.t === 'v') iv += x.a; });
+    state.months[k].forEach(x => { if (x.d > td) return; if (x.t === 's') sv += x.a; else if (x.t === 'v') iv += x.a; });
     if (k <= curMonth() && state.months[k].length) pv += ledger(k).pvd;
   }
   const debt = S.debts.reduce((s, d) => s + debtLeft(d, sums), 0);
@@ -1435,7 +1442,7 @@ function goalStat(g, sums) {
   const rem = Math.max(0, target - cur);
   const n = Math.min(3, Math.max(1, monthDiff(g.from || curMonth(), curMonth()) + 1));
   let tagged = 0;
-  for (let i = 0; i < n; i++) (state.months[shiftMonth(curMonth(), -i)] || []).forEach(x => { if (x.g === g.id) tagged += x.a; });
+  for (let i = 0; i < n; i++) (state.months[shiftMonth(curMonth(), -i)] || []).forEach(x => { if (x.g === g.id && x.d <= todayStr()) tagged += x.a; });
   const recent = Math.round(tagged / n);
   let need = null, overdue = false;
   if (g.due) {
@@ -1661,6 +1668,7 @@ function renderAlerts() {
       else if (diff <= 5) out.push({tone: 'warn', t: diff === 0 ? `💳 ${d.n} ครบกำหนดจ่ายวันนี้ (${money(d.pay)})` : `💳 ${d.n} ครบกำหนดอีก ${diff} วัน (${money(d.pay)})`});
     });
   }
+  if (state.ready && state.view > curMonth()) out.push({tone: 'info', t: 'เดือนล่วงหน้า: รายการที่จดไว้ที่นี่ยังไม่นับในทรัพย์สินสุทธิ เป้าหมาย หนี้ และหน้าสรุป จนกว่าจะถึงวันที่ของรายการ'});
   box.innerHTML = out.map(a => `<div class="alert ${a.tone}">${esc(a.t)}</div>`).join('');
   box.hidden = !out.length;
 }
@@ -1671,22 +1679,22 @@ function renderYear(box) {
   $('#yearLabel').textContent = fYear.format(new Date(+y, 0, 1));
   const lastY = Math.max(new Date().getFullYear(), ...Object.keys(state.months).filter(k => state.months[k].length).map(k => +k.slice(0, 4)));
   $('#ynext').disabled = +y >= lastY;
-  const rows = ms.map(m => { const P = planFor(m); return {m, P, has: P.hasData}; });
+  const rows = ms.map(m => { const P = planFor(m); return {m, P, has: P.hasData && m <= curMonth()}; });
   const has = rows.filter(r => r.has);
   if (!has.length) { box.innerHTML = empty('ยังไม่มีบันทึกในปีนี้', '<p>จดรายการแล้วกลับมาดูภาพรวมทั้งปีได้ที่นี่</p>'); return; }
   const tot = has.reduce((a, r) => { a.inc += r.P.L.income; a.exp += r.P.t.e; a.sv += r.P.saveAct; a.iv += r.P.investAct; a.sso += r.P.L.sso; a.pvd += r.P.L.pvd; return a; }, {inc: 0, exp: 0, sv: 0, iv: 0, sso: 0, pvd: 0});
   const rate = tot.inc > 0 ? Math.round((tot.sv + tot.iv) / tot.inc * 100) : 0;
   const withGoal = has.filter(r => r.P.E.save > 0 || r.P.E.invest > 0);
   const hit = withGoal.filter(r => r.P.saveAct >= r.P.E.save && r.P.investAct >= r.P.E.invest).length;
-  const mx = Math.max(1, ...rows.map(r => r.P.t.e + r.P.saveAct + r.P.investAct));
+  const mx = Math.max(1, ...rows.map(r => r.has ? r.P.t.e + r.P.saveAct + r.P.investAct : 0));
   const cols = rows.map(r => {
-    const e = r.P.t.e, s = r.P.saveAct, v = r.P.investAct, pc = x => x / mx * 100;
+    const e = r.has ? r.P.t.e : 0, s = r.has ? r.P.saveAct : 0, v = r.has ? r.P.investAct : 0, pc = x => x / mx * 100;
     return `<div class="ycol"><div class="ystack" title="${fMonth.format(parseYmd(r.m + '-01'))}"><i style="height:${pc(e)}%;background:var(--expense)"></i><i style="height:${pc(s)}%;background:var(--save)"></i><i style="height:${pc(v)}%;background:var(--invest)"></i></div><span>${fMonthShort.format(parseYmd(r.m + '-01'))}</span></div>`;
   }).join('');
   const by = {};
-  allTx().forEach(x => { if (x.t === 'e' && x.d.startsWith(y)) by[x.c] = (by[x.c] || 0) + x.a; });
+  allTx().forEach(x => { if (x.t === 'e' && x.d.startsWith(y) && x.d <= todayStr()) by[x.c] = (by[x.c] || 0) + x.a; });
   const top = Object.entries(by).sort((a, b) => b[1] - a[1]).slice(0, 5), topMax = top.length ? top[0][1] : 1;
-  const taxFund = allTx().filter(x => x.t === 'v' && x.c === 'v_tax' && x.d.startsWith(y)).reduce((s, x) => s + x.a, 0);
+  const taxFund = allTx().filter(x => x.t === 'v' && x.c === 'v_tax' && x.d.startsWith(y) && x.d <= todayStr()).reduce((s, x) => s + x.a, 0);
   const capPct = S.taxCap > 0 ? Math.min(100, taxFund / S.taxCap * 100) : 0;
   box.innerHTML = `
     <div class="kpis">
@@ -1848,7 +1856,7 @@ document.addEventListener('click', e => {
   switch (ds.action) {
     case 'page': setPage(ds.to); break;
     case 'prev': state.view = shiftMonth(state.view, -1); resetFilters(); renderAll(); break;
-    case 'next': if (state.view < (state.page === 'assump' ? assumpMax() : maxKey())) { state.view = shiftMonth(state.view, 1); resetFilters(); renderAll(); } break;
+    case 'next': if (state.view < (state.page === 'assump' || state.page === 'book' ? assumpMax() : maxKey())) { state.view = shiftMonth(state.view, 1); resetFilters(); renderAll(); } break;
     case 'pickcat': state.cat = state.cat === ds.c ? null : ds.c; if (state.tab !== 'e') state.tab = 'all'; renderBreakdown(); renderList(); break;
     case 'tab': state.tab = ds.tab; renderList(); break;
     case 'clearcat': state.cat = null; renderBreakdown(); renderList(); break;
